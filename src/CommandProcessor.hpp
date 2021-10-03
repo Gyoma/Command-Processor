@@ -83,7 +83,7 @@ namespace comp
 
    struct CommandStatus
    {
-      enum Status
+      enum Status : int
       {
          ERROR,
          OK
@@ -104,7 +104,7 @@ namespace comp
    class StatusHandler
    {
    public:
-      virtual void handle(const CommandStatus& stat);
+      virtual void handle(const CommandStatus& stat) {};
    };
 
    class CommandCaller
@@ -143,6 +143,7 @@ namespace comp
 
       void init(const ArgVec& args);
       void run();
+      void run(const ArgVec& args);
 
       void appendCommand(const CommandCaller& caller);
       void setHandler(const StatusHandler& handler);
@@ -493,6 +494,12 @@ namespace comp
       }
    }
 
+   inline void Commander::run(const ArgVec& args)
+   {
+      init(args);
+      run();
+   }
+
    void Commander::appendCommand(const CommandCaller& caller)
    {
       m_commands[caller.config().name()] = caller;
@@ -512,7 +519,4 @@ namespace comp
    {
       return (m_commands.find(val) != m_commands.end());
    }
-
-   void StatusHandler::handle(const CommandStatus&)
-   {}
 }
