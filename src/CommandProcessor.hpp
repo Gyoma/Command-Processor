@@ -20,8 +20,8 @@ namespace comp
       Option& name(const std::string& Name);
       std::string name() const;
 
-      Option& sizeVariadic(bool SizeVariadic);
-      bool sizeVariadic() const;
+      Option& variadicSize(bool variadicSize);
+      bool variadicSize() const;
 
       Option& argSize(size_t ArgSize);
       size_t argSize() const;
@@ -29,7 +29,7 @@ namespace comp
    private:
 
       std::string m_name;
-      bool m_sizeVariadic;
+      bool m_variadicSize;
       size_t m_argSize;
    };
 
@@ -74,7 +74,7 @@ namespace comp
 
    private:
 
-      bool isProperty(const std::string& s) const;
+      bool isProperty(const std::string& val) const;
       void parse(const ArgVec& args);
 
       std::unordered_map<std::string, std::string> m_argTable;
@@ -122,12 +122,9 @@ namespace comp
       CommandCaller(Object* object, Method<Object> method, const CommandConfig& config);
 
       CommandStatus invoke(const ArgVec& args) const;
+      const CommandConfig& config() const;
 
    private:
-
-      friend class Commander;
-
-      const CommandConfig& config() const;
 
       CommandConfig  m_config;
       Callback   m_callback{ nullptr };
@@ -148,9 +145,9 @@ namespace comp
       void run();
 
       void appendCommand(const CommandCaller& caller);
-      CommandStatus invokeCommand(const std::string& command, const ArgVec& args);
-
       void setHandler(const StatusHandler& handler);
+
+      CommandStatus invokeCommand(const std::string& command, const ArgVec& args);
 
    private:
 
@@ -163,7 +160,7 @@ namespace comp
 
    Option::Option(const std::string& Name) :
       m_name(Name),
-      m_sizeVariadic(false),
+      m_variadicSize(false),
       m_argSize(0)
    {}
 
@@ -178,15 +175,15 @@ namespace comp
       return m_name;
    }
 
-   Option& Option::sizeVariadic(bool SizeVariadic)
+   Option& Option::variadicSize(bool variadicSize)
    {
-      m_sizeVariadic = SizeVariadic;
+      m_variadicSize = variadicSize;
       return *this;
    }
 
-   bool Option::sizeVariadic() const
+   bool Option::variadicSize() const
    {
-      return m_sizeVariadic;
+      return m_variadicSize;
    }
 
    Option& Option::argSize(size_t ArgSize)
@@ -347,27 +344,23 @@ namespace comp
       return m_config.name();
    }
 
-   bool CommandArgs::isProperty(const std::string& s) const
+   bool CommandArgs::isProperty(const std::string& val) const
    {
-      return m_config.has(s);
+      return m_config.has(val);
    }
 
    void CommandArgs::parse(const ArgVec& args)
    {
-      size_t command_count = 0;
+      Option unk_opt("unknown");
+      unk_opt.argSize(std::numeric_limits<size_t>::max());
+      unk_opt.variadicSize(true);
 
       for (size_t i = 0; i < args.size();)
       {
-         std::string key = m_config.name();
-         size_t count = command_count;
+         std::string key = isProperty(args[i]) ? args[i++] : unk_opt.name();
+         size_t count = 0;
 
-         if (isProperty(args[i]))
-         {
-            key = args[i++];
-            count = 0;
-         }
-
-         auto const& option = m_config.option(key);
+         auto const& option = (m_config.has(key) ? m_config.option(key) : unk_opt);
          std::string val;
 
          while (i < args.size() && !isProperty(args[i]))
@@ -379,14 +372,14 @@ namespace comp
             }
             else
             {
-               throw std::runtime_error("unexpected value \"" + args[i] + "\"");
+               break;
             }
          }
 
          if (!val.empty())
             val.pop_back();
 
-         if (count < option.argSize() && !option.sizeVariadic())
+         if (count < option.argSize() && !option.variadicSize())
             throw std::runtime_error("not enough arguments \"" + key + "\"");
 
          m_argTable[key] = val;
@@ -480,7 +473,7 @@ namespace comp
             if (isCommand(m_args[i]))
             {
                command = m_args[i];
-               ArgVec args;
+               ArgVec args = { command };
 
                while (i + 1 < m_args.size() && !isCommand(m_args[i + 1]))
                   args.emplace_back(m_args[++i]);
