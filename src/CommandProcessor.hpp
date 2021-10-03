@@ -75,6 +75,7 @@ namespace comp
    private:
 
       bool isProperty(const std::string& val) const;
+      bool isCommand(const std::string& val) const;
       void parse(const ArgVec& args);
 
       std::unordered_map<std::string, std::string> m_argTable;
@@ -350,6 +351,11 @@ namespace comp
       return m_config.has(val);
    }
 
+   bool CommandArgs::isCommand(const std::string& val) const
+   {
+      return val == m_config.name();
+   }
+
    void CommandArgs::parse(const ArgVec& args)
    {
       Option unk_opt("unknown");
@@ -358,6 +364,12 @@ namespace comp
 
       for (size_t i = 0; i < args.size();)
       {
+         if (isCommand(args[i]) && !m_config.has(args[i]))
+         {
+            ++i;
+            continue;
+         }
+
          std::string key = isProperty(args[i]) ? args[i++] : unk_opt.name();
          size_t count = 0;
 
