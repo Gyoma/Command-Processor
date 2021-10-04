@@ -6,12 +6,13 @@
 #include <functional>
 #include <stdexcept>
 #include <sstream>
+#include <memory>
 
 namespace comp
 {
    using ArgVec = std::vector<std::string>;
-   using CommandVec = std::vector<CommandArgs>;
-   using ConfigMap = std::unordered_map<std::string, CommandConfig>;
+   using CommandVec = std::vector<class CommandArgs>;
+   using ConfigMap = std::unordered_map<std::string, std::shared_ptr<class CommandConfig>>;
 
    class Option
    {
@@ -67,19 +68,20 @@ namespace comp
       const CommandArgs& command(size_t index) const;
       const CommandArgs& command(const std::string& name) const;
 
-      void appendConfig(const CommandConfig::Ptr& pConfig);
+      void appendConfig(CommandConfig::Ptr pConfig);
       void removeConfig(const std::string& name);
-      const CommandConfig::Ptr& config(const std::string& name) const;
+      CommandConfig::Ptr config(const std::string& name) const;
       const ConfigMap& configMap() const;
 
       bool hasCommand(const std::string& name) const;
       bool hasConfig(const std::string& name) const;
 
       void parse();
+      void parse(const ArgVec& args);
 
    private:
 
-      void parseCommand(const std::string& command, const ArgVec& args);
+      CommandArgs parseCommand(const std::string& command, const ArgVec& args);
 
       ArgVec m_args;
       CommandVec m_commands;
@@ -90,12 +92,17 @@ namespace comp
    {
    public:
 
-      CommandArgs(const ArgVec& args, const CommandConfig& config);
+      CommandArgs() = default;
+      explicit CommandArgs(const std::string& command);
+
       CommandArgs(const CommandArgs& other);
       CommandArgs(CommandArgs&& other) noexcept;
 
       CommandArgs& operator=(const CommandArgs& other);
       CommandArgs& operator=(CommandArgs&& other) noexcept;
+
+      void insert(const std::string& key, const std::string& val);
+      void remove(const std::string& key);
 
       ArgVec getStrVec(const std::string& name, bool throwEx = false) const;
       std::string getString(const std::string& name) const;
@@ -106,16 +113,13 @@ namespace comp
 
       static std::string tolower(std::string& str);
 
+      void setCommand(const std::string& command);
       std::string command() const;
 
    private:
 
-      bool isProperty(const std::string& val) const;
-      bool isCommand(const std::string& val) const;
-      void parse(const ArgVec& args);
-
+      std::string m_command;
       std::unordered_map<std::string, std::string> m_argTable;
-      CommandConfig m_config;
    };
 
    struct CommandStatus
@@ -141,7 +145,7 @@ namespace comp
    class StatusHandler
    {
    public:
-      virtual void handle(const CommandStatus& stat) {};
+      virtual int32_t handle(const CommandStatus& stat) { return 0; };
    };
 
    class CommandCaller
@@ -153,17 +157,19 @@ namespace comp
 
       CommandCaller();
 
-      CommandCaller(Callback callback, const CommandConfig& config);
+      CommandCaller(Callback callback, CommandConfig::Ptr config);
 
       template<typename Object>
-      CommandCaller(Object* object, Method<Object> method, const CommandConfig& config);
+      CommandCaller(Object* object, Method<Object> method, CommandConfig::Ptr config);
 
       CommandStatus invoke(const ArgVec& args) const;
-      const CommandConfig& config() const;
+      CommandStatus invoke(const CommandArgs& args) const;
+
+      CommandConfig::Ptr config() const;
 
    private:
 
-      CommandConfig  m_config;
+      CommandConfig::Ptr  m_config;
       Callback   m_callback{ nullptr };
       std::function<CommandStatus(const CommandArgs&)> m_invoke{ nullptr };
    };
@@ -183,15 +189,19 @@ namespace comp
       void run(const ArgVec& args);
 
       void appendCommand(const CommandCaller& caller);
+      void removeCommand(const std::string& callerName);
+
       void setHandler(const StatusHandler& handler);
 
-      CommandStatus invokeCommand(const std::string& command, const ArgVec& args);
+      CommandStatus invokeCommand(const std::string& command, const ArgVec& args) const;
+      CommandStatus invokeCommand(const CommandArgs& args) const;
 
    private:
 
       bool isCommand(const std::string& val);
 
       ArgVec m_args;
+      CommandParser m_parser;
       std::unordered_map<std::string, CommandCaller> m_commands;
       StatusHandler m_handler;
    };
@@ -300,9 +310,9 @@ namespace comp
       return *it;
    }
 
-   void CommandParser::appendConfig(const CommandConfig::Ptr& pConfig)
+   void CommandParser::appendConfig(CommandConfig::Ptr pConfig)
    {
-      m_configs[pConfig->name()] = pConfig;
+      m_configs[pConfig->name()] = std::move(pConfig);
    }
 
    void CommandParser::removeConfig(const std::string& name)
@@ -313,10 +323,10 @@ namespace comp
          m_configs.erase(it);
    }
 
-   const CommandConfig::Ptr& CommandParser::config(const std::string& name) const
+   CommandConfig::Ptr CommandParser::config(const std::string& name) const
    {
       auto it = m_configs.find(name);
-      return (it != m_configs.end() : it->second : nullptr);
+      return (it != m_configs.end() ? it->second : nullptr);
    }
 
    const ConfigMap& CommandParser::configMap() const
@@ -340,61 +350,47 @@ namespace comp
 
    void CommandParser::parse()
    {
-      std::string command;
+      for (size_t i = 0; i < m_args.size();)
+      {
+         std::string command = hasConfig(m_args[i]) ? m_args[i++] : "unknown";
+         ArgVec args = { command };
 
-      //try
-      //{
-      //   for (size_t i = 0; i < m_args.size(); ++i)
-      //   {
-      //      if (hasConfig(m_args[i]))
-      //      {
-      //         command = m_args[i];
-      //         ArgVec args = { command };
+         while (i < m_args.size() && !hasConfig(m_args[i]))
+            args.push_back(m_args[i++]);
 
-      //         while (i + 1 < m_args.size() && !hasConfig(m_args[i + 1]))
-      //            args.emplace_back(m_args[++i]);
-
-      //         parseCommand(command, args);
-      //         //m_handler.handle(invokeCommand(command, args));
-      //      }
-      //      else
-      //      {
-      //         m_handler.handle(CommandStatus(m_args[i], CommandStatus::ERROR, "not a command"));
-      //         break;
-      //      }
-      //   }
-      //}
-      //catch (const std::exception& ex)
-      //{
-      //   m_handler.handle(CommandStatus(command, CommandStatus::ERROR, ex.what()));
-      //}
+         m_commands.push_back(parseCommand(command, args));
+      }
    }
 
-   void CommandParser::parseCommand(const std::string& command, const ArgVec& args)
+   void CommandParser::parse(const ArgVec& args)
    {
+      init(args);
+      parse();
+   }
+
+   CommandArgs CommandParser::parseCommand(const std::string& command, const ArgVec& args)
+   {
+      CommandArgs comargs(command);
+
       Option unk_opt("unknown");
       unk_opt.argSize(std::numeric_limits<size_t>::max());
       unk_opt.variadicSize(true);
 
-      CommandArgs args;
+      auto conf = config(command);
 
       for (size_t i = 0; i < args.size();)
       {
-         if (args[i] == command && !hasConfig(args[i]))
+         if (args[i] == command && !(conf && conf->has(command)))
          {
             ++i;
             continue;
          }
 
-         auto const& command_config = config(command);
-
-         std::string key = command_config->has(args[i]) ? args[i++] : unk_opt.name();
-         size_t count = 0;
-
-         auto const& option = (command_config->has(key) ? command_config->option(key) : unk_opt);
          std::string val;
+         size_t count = 0;
+         auto const& option = (conf && conf->has(args[i]) ? conf->option(args[i++]) : unk_opt);
 
-         while (i < args.size() && !command_config->has(args[i]))
+         while (i < args.size() && !(conf && conf->has(args[i])))
          {
             if (count < option.argSize())
             {
@@ -411,34 +407,34 @@ namespace comp
             val.pop_back();
 
          if (count < option.argSize() && !option.variadicSize())
-            throw std::runtime_error("not enough arguments \"" + key + "\"");
+            throw std::runtime_error("not enough arguments \"" + option.name() + "\"");
 
-         m_argTable[key] = val;
+         comargs.insert(option.name(), val);
       }
+
+      return comargs;
    }
 
-   CommandArgs::CommandArgs(const ArgVec& args, const CommandConfig& config) :
-      m_config(config)
-   {
-      parse(args);
-   }
+   CommandArgs::CommandArgs(const std::string& command) :
+      m_command(command)
+   {}
 
    CommandArgs::CommandArgs(const CommandArgs& other) :
-      m_argTable(other.m_argTable),
-      m_config(other.m_config)
+      m_command(other.m_command),
+      m_argTable(other.m_argTable)
    {}
 
    CommandArgs::CommandArgs(CommandArgs&& other) noexcept :
-      m_argTable(std::move(other.m_argTable)),
-      m_config(std::move(other.m_config))
+      m_command(std::move(other.m_command)),
+      m_argTable(std::move(other.m_argTable))
    {}
 
    CommandArgs& CommandArgs::operator=(const CommandArgs& other)
    {
       if (this != &other)
       {
+         m_command = other.m_command;
          m_argTable = other.m_argTable;
-         m_config = other.m_config;
       }
 
       return *this;
@@ -448,11 +444,21 @@ namespace comp
    {
       if (this != &other)
       {
+         m_command = std::move(other.m_command);
          m_argTable = std::move(other.m_argTable);
-         m_config = std::move(other.m_config);
       }
 
       return *this;
+   }
+
+   void CommandArgs::insert(const std::string& key, const std::string& val)
+   {
+      m_argTable[key] = val;
+   }
+
+   void CommandArgs::remove(const std::string& key)
+   {
+      m_argTable.erase(key);
    }
 
    ArgVec CommandArgs::getStrVec(const std::string& name, bool throwEx) const
@@ -530,62 +536,14 @@ namespace comp
       return str;
    }
 
+   void CommandArgs::setCommand(const std::string& command)
+   {
+      m_command = command;
+   }
+
    std::string CommandArgs::command() const
    {
-      return m_config.name();
-   }
-
-   bool CommandArgs::isProperty(const std::string& val) const
-   {
-      return m_config.has(val);
-   }
-
-   bool CommandArgs::isCommand(const std::string& val) const
-   {
-      return val == m_config.name();
-   }
-
-   void CommandArgs::parse(const ArgVec& args)
-   {
-      Option unk_opt("unknown");
-      unk_opt.argSize(std::numeric_limits<size_t>::max());
-      unk_opt.variadicSize(true);
-
-      for (size_t i = 0; i < args.size();)
-      {
-         if (isCommand(args[i]) && !m_config.has(args[i]))
-         {
-            ++i;
-            continue;
-         }
-
-         std::string key = isProperty(args[i]) ? args[i++] : unk_opt.name();
-         size_t count = 0;
-
-         auto const& option = (m_config.has(key) ? m_config.option(key) : unk_opt);
-         std::string val;
-
-         while (i < args.size() && !isProperty(args[i]))
-         {
-            if (count < option.argSize())
-            {
-               val += args[i++] + ' ';
-               ++count;
-            }
-            else
-            {
-               break;
-            }
-         }
-
-         if (!val.empty())
-            val.pop_back();
-
-         if (count < option.argSize() && !option.variadicSize())
-            throw std::runtime_error("not enough arguments \"" + key + "\"");
-
-         m_argTable[key] = val;
-      }
+      return m_command;
    }
 
    CommandStatus::CommandStatus(const std::string& Name, Status Stat, const std::string& Msg) :
@@ -633,24 +591,33 @@ namespace comp
    CommandCaller::CommandCaller()
    {}
 
-   CommandCaller::CommandCaller(Callback callback, const CommandConfig& config) :
-      m_config{ config },
+   CommandCaller::CommandCaller(Callback callback, CommandConfig::Ptr config) :
+      m_config{ std::move(config) },
       m_callback{ callback }
    {}
 
    template<typename Object>
-   inline CommandCaller::CommandCaller(Object* object, Method<Object> method, const CommandConfig& config) :
-      m_config{ config },
+   inline CommandCaller::CommandCaller(Object* object, Method<Object> method, CommandConfig::Ptr config) :
+      m_config{ std::move(config) },
       m_invoke{ [object, method](const CommandArgs& args) { return (object->*method)(args); } }
    {}
 
    CommandStatus CommandCaller::invoke(const ArgVec& args) const
    {
-      CommandArgs cargs(args, m_config);
-      return (m_callback ? m_callback(cargs) : m_invoke(cargs));
+      CommandParser cparser;
+      cparser.appendConfig(m_config);
+      cparser.parse(args);
+      CommandArgs cargs = cparser.command(0);
+
+      return invoke(cargs);
    }
 
-   const CommandConfig& CommandCaller::config() const
+   CommandStatus CommandCaller::invoke(const CommandArgs& args) const
+   {
+      return (m_callback ? m_callback(args) : m_invoke(args));
+   }
+
+   CommandConfig::Ptr CommandCaller::config() const
    {
       return m_config;
    }
@@ -666,32 +633,30 @@ namespace comp
 
    void Commander::run()
    {
-      std::string command;
+      m_parser.parse(m_args);
+      int32_t state = 0;
 
-      try
+      const CommandVec& commands = m_parser.commands();
+
+      for (size_t i = 0; state == 0 && i < commands.size(); ++i)
       {
-         for (size_t i = 0; i < m_args.size(); ++i)
+         const CommandArgs& commandArgs = commands[i];
+
+         try
          {
-            if (isCommand(m_args[i]))
+            if (isCommand(commandArgs.command()))
             {
-               command = m_args[i];
-               ArgVec args = { command };
-
-               while (i + 1 < m_args.size() && !isCommand(m_args[i + 1]))
-                  args.emplace_back(m_args[++i]);
-
-               m_handler.handle(invokeCommand(command, args));
+               state = m_handler.handle(invokeCommand(commandArgs));
             }
             else
             {
-               m_handler.handle(CommandStatus(m_args[i], CommandStatus::ERROR, "not a command"));
-               break;
+               state = m_handler.handle(CommandStatus(commandArgs.command(), CommandStatus::ERROR, "not a command"));
             }
          }
-      }
-      catch (const std::exception& ex)
-      {
-         m_handler.handle(CommandStatus(command, CommandStatus::ERROR, ex.what()));
+         catch (const std::exception& ex)
+         {
+            state = m_handler.handle(CommandStatus(commandArgs.command(), CommandStatus::ERROR, ex.what()));
+         }
       }
    }
 
@@ -703,12 +668,25 @@ namespace comp
 
    void Commander::appendCommand(const CommandCaller& caller)
    {
-      m_commands[caller.config().name()] = caller;
+      m_commands[caller.config()->name()] = caller;
+      m_parser.appendConfig(caller.config());
    }
 
-   CommandStatus Commander::invokeCommand(const std::string& command, const ArgVec& args)
+
+   void Commander::removeCommand(const std::string& callerName)
+   {
+      m_commands.erase(callerName);
+      m_parser.removeConfig(callerName);
+   }
+
+   CommandStatus Commander::invokeCommand(const std::string& command, const ArgVec& args) const
    {
       return m_commands.at(command).invoke(args);
+   }
+
+   CommandStatus Commander::invokeCommand(const CommandArgs& commandArgs) const
+   {
+      return m_commands.at(commandArgs.command()).invoke(commandArgs);
    }
 
    void Commander::setHandler(const StatusHandler& handler)
