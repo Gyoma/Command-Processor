@@ -10,6 +10,8 @@
 namespace comp
 {
    using ArgVec = std::vector<std::string>;
+   using CommandVec = std::vector<CommandArgs>;
+   using ConfigMap = std::unordered_map<std::string, CommandConfig>;
 
    class Option
    {
@@ -37,6 +39,8 @@ namespace comp
    {
    public:
 
+      using Ptr = std::shared_ptr<CommandConfig>;
+
       CommandConfig(const std::string& name = "");
 
       void append(const Option& opt);
@@ -48,6 +52,38 @@ namespace comp
 
       std::string m_name;
       std::unordered_map<std::string, Option> m_options;
+   };
+
+   class CommandParser
+   {
+   public:
+
+      CommandParser() = default;
+      CommandParser(const ArgVec& args);
+
+      void init(const ArgVec& args);
+
+      const CommandVec& commands() const;
+      const CommandArgs& command(size_t index) const;
+      const CommandArgs& command(const std::string& name) const;
+
+      void appendConfig(const CommandConfig::Ptr& pConfig);
+      void removeConfig(const std::string& name);
+      const CommandConfig::Ptr& config(const std::string& name) const;
+      const ConfigMap& configMap() const;
+
+      bool hasCommand(const std::string& name) const;
+      bool hasConfig(const std::string& name) const;
+
+      void parse();
+
+   private:
+
+      void parseCommand(const std::string& command, const ArgVec& args);
+
+      ArgVec m_args;
+      CommandVec m_commands;
+      ConfigMap m_configs;
    };
 
    class CommandArgs
@@ -226,6 +262,159 @@ namespace comp
          throw std::runtime_error("key \"" + name + "\" not found");
 
       return res->second;
+   }
+
+   CommandParser::CommandParser(const ArgVec& args) :
+      m_args(args)
+   {}
+
+   void CommandParser::init(const ArgVec& args)
+   {
+      m_args = args;
+   }
+
+   const CommandVec& CommandParser::commands() const
+   {
+      return m_commands;
+   }
+
+   const CommandArgs& CommandParser::command(size_t index) const
+   {
+      if (index >= m_commands.size())
+         throw std::runtime_error("Out of range");
+
+      return m_commands[index];
+   }
+
+   const CommandArgs& CommandParser::command(const std::string& name) const
+   {
+      auto const& it = std::find_if(m_commands.begin(), m_commands.end(),
+         [&name](auto const& comm)
+         {
+            return comm.command() == name;
+         });
+
+      if (it == m_commands.end())
+         throw std::runtime_error("Out of range");
+
+      return *it;
+   }
+
+   void CommandParser::appendConfig(const CommandConfig::Ptr& pConfig)
+   {
+      m_configs[pConfig->name()] = pConfig;
+   }
+
+   void CommandParser::removeConfig(const std::string& name)
+   {
+      auto it = m_configs.find(name);
+
+      if (it != m_configs.end())
+         m_configs.erase(it);
+   }
+
+   const CommandConfig::Ptr& CommandParser::config(const std::string& name) const
+   {
+      auto it = m_configs.find(name);
+      return (it != m_configs.end() : it->second : nullptr);
+   }
+
+   const ConfigMap& CommandParser::configMap() const
+   {
+      return m_configs;
+   }
+
+   bool CommandParser::hasCommand(const std::string& name) const
+   {
+      return std::find_if(m_commands.begin(), m_commands.end(),
+         [&name](auto const& comm)
+         {
+            return comm.command() == name;
+         }) == m_commands.end();
+   }
+
+   bool CommandParser::hasConfig(const std::string& name) const
+   {
+      return m_configs.find(name) != m_configs.end();
+   }
+
+   void CommandParser::parse()
+   {
+      std::string command;
+
+      //try
+      //{
+      //   for (size_t i = 0; i < m_args.size(); ++i)
+      //   {
+      //      if (hasConfig(m_args[i]))
+      //      {
+      //         command = m_args[i];
+      //         ArgVec args = { command };
+
+      //         while (i + 1 < m_args.size() && !hasConfig(m_args[i + 1]))
+      //            args.emplace_back(m_args[++i]);
+
+      //         parseCommand(command, args);
+      //         //m_handler.handle(invokeCommand(command, args));
+      //      }
+      //      else
+      //      {
+      //         m_handler.handle(CommandStatus(m_args[i], CommandStatus::ERROR, "not a command"));
+      //         break;
+      //      }
+      //   }
+      //}
+      //catch (const std::exception& ex)
+      //{
+      //   m_handler.handle(CommandStatus(command, CommandStatus::ERROR, ex.what()));
+      //}
+   }
+
+   void CommandParser::parseCommand(const std::string& command, const ArgVec& args)
+   {
+      Option unk_opt("unknown");
+      unk_opt.argSize(std::numeric_limits<size_t>::max());
+      unk_opt.variadicSize(true);
+
+      CommandArgs args;
+
+      for (size_t i = 0; i < args.size();)
+      {
+         if (args[i] == command && !hasConfig(args[i]))
+         {
+            ++i;
+            continue;
+         }
+
+         auto const& command_config = config(command);
+
+         std::string key = command_config->has(args[i]) ? args[i++] : unk_opt.name();
+         size_t count = 0;
+
+         auto const& option = (command_config->has(key) ? command_config->option(key) : unk_opt);
+         std::string val;
+
+         while (i < args.size() && !command_config->has(args[i]))
+         {
+            if (count < option.argSize())
+            {
+               val += args[i++] + ' ';
+               ++count;
+            }
+            else
+            {
+               break;
+            }
+         }
+
+         if (!val.empty())
+            val.pop_back();
+
+         if (count < option.argSize() && !option.variadicSize())
+            throw std::runtime_error("not enough arguments \"" + key + "\"");
+
+         m_argTable[key] = val;
+      }
    }
 
    CommandArgs::CommandArgs(const ArgVec& args, const CommandConfig& config) :
