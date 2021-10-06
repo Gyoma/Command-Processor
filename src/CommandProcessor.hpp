@@ -170,8 +170,7 @@ namespace comp
    private:
 
       CommandConfig::Ptr  m_config;
-      Callback   m_callback{ nullptr };
-      std::function<CommandStatus(const CommandArgs&)> m_invoke{ nullptr };
+      std::function<CommandStatus(const CommandArgs&)> m_callback{ nullptr };
    };
 
    class Commander final
@@ -599,7 +598,7 @@ namespace comp
    template<typename Object>
    inline CommandCaller::CommandCaller(Object* object, Method<Object> method, CommandConfig::Ptr config) :
       m_config{ std::move(config) },
-      m_invoke{ [object, method](const CommandArgs& args) { return (object->*method)(args); } }
+      m_callback{ [object, method](const CommandArgs& args) { return (object->*method)(args); } }
    {}
 
    CommandStatus CommandCaller::invoke(const ArgVec& args) const
@@ -614,7 +613,7 @@ namespace comp
 
    CommandStatus CommandCaller::invoke(const CommandArgs& args) const
    {
-      return (m_callback ? m_callback(args) : m_invoke(args));
+      return m_callback(args);
    }
 
    CommandConfig::Ptr CommandCaller::config() const
